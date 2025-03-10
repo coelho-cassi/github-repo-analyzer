@@ -6,6 +6,8 @@ import re # Regular expressions
 import pylint.lint # Pylint static analysis
 from radon.complexity import cc_visit # Cyclomatic Complexity
 from radon.metrics import h_visit # Halstead Metrics
+import markdown # Markdown rendering
+from datetime import datetime # Date and time
 
 # Load environment variables from .env file
 load_dotenv()
@@ -146,6 +148,82 @@ def analyze_with_pylint(file_content, filename):
         print(f"Pylint analysis error: {e}")
         return None
 
+def generate_markdown_report(repo_info, file_analyses):
+    # Generate comprehensive markdown documentation for the repository
+    report = f"# Repository Analysis Report: {repo_info['name']}\n\n"
+    report += f"## Repository Overview\n"
+    report += f"- **Description**: {repo_info.get('description', 'No description')}\n"
+    report += f"- **Primary Language**: {repo_info.get('language', 'Unknown')}\n"
+    report += f"- **Stars**: {repo_info.get('stars', 'N/A')}\n\n"
+    report += f"- **Analysis Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    
+    report += "## Code Analysis Details\n"
+    
+    for filename, analysis in file_analyses.items():
+        report += f"### File: {filename}\n"
+        
+        # Cyclomatic Complexity
+        report += f"#### Cyclomatic Complexity\n"
+        if analysis.get('cyclomatic_complexity'):
+            for func in analysis['cyclomatic_complexity']:
+                report += f"- **{func['name']}**: {func['complexity']} complexity\n"
+        else:
+                report += "- No complexity analysis available\n"
+        
+        # Halstead Metrics
+        report += f"#### Halstead Metrics\n"
+        if analysis.get('halstead_metrics'):
+            metrics = analysis['halstead_metrics']
+            report += f"- **Volume**: {metrics['volume']:.2f}\n"
+            report += f"- **Difficulty**: {metrics['difficulty']:.2f}\n"
+            report += f"- **Effort**: {metrics['effort']:.2f}\n"
+        else:
+                report += "- No Halstead metrics available\n"   
+                
+        # Pylint Issues
+        report += "#### Code Quality Issues\n"
+        if analysis.get('pylint_issues'):
+            report += "```\n"
+            report += analysis['pylint_issues']
+            report += "\n```\n"
+        else:
+            report += "- No significant issues detected\n"
+         
+        report += "\n---\n"
+        
+        # Save markdown report to a file
+        output_dir = 'repository_analysis'
+        os.markdir(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, f"{repo_info['name']}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
+        
+        with open(output_file, 'w') as f:
+            f.write(report)
+            
+        # Convert to HTML
+        html_output = os.path.join(output_dir, f"{repo_info['name']}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+        html_content = markdown.markdown(report)
+        
+        with open(html_output, 'w') as f:
+            f.write(f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Repository Analysis Report</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
+                    h1, h2, h3 {{ color: #333; }}
+                    code {{ background-color: #f4f4f4; padding: 2px 4px; }}
+                </style>
+            </head>
+            <body>
+                {html_content}
+            </body>
+            </html>
+            """)
+            
+            return output_file, html_output
+        
+        
 def main():
     repo_url = input("Enter the GitHub repository URL: ")
     repo_info = get_repo_info(repo_url)
@@ -166,8 +244,10 @@ def main():
                     if file_contents:
                         print(f"\nContents of {file_to_read}:")
                         print(file_contents[:500] + "..." if len(file_contents) > 500 else file_contents)
-    
-    if repo_info and 'contents' in repo_info:
+    # Code analysis
+    if 'contents' in repo_info:
+        file_analyses = {}
+        
         print("\nCode Analysis:")
         for file in repo_info['contents']:
             # Analyze only Python files
@@ -191,5 +271,15 @@ def main():
                         print("\nPylint Issues:")
                         print(analysis_results['pylint_issues'] or "No issues found")
                         
+                        file_analyses[file] = analysis_results
+    
+    # Generate documentation
+    if file_analyses:
+        md_report, html_report = generate_markdown_report(repo_info, file_analyses)
+        print(f"\nAnalysis complete!")
+        print(f"Markdown Report: {md_report}")
+        print(f"HTML Report: {html_report}")
+                
+                
 if __name__ == "__main__":
     main()
