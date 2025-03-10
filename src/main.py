@@ -18,19 +18,31 @@ load_dotenv()
 # Github Token
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
-def setup_logging():
+def setup_logging(logging_config: Dict[str, Any] = None):
     # Create logs directory if it doesn't exist
-     os.makedirs('logs', exist_ok=True)
-     
-     # Configure Logging
-     logging.basicConfig(
-         level=logging.INFO,
-         format='%(asctime)s - %(levelname)s - %(message)s',
-         handlers=[
-             logging.FileHandler(f'logs/repo_analysis_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
-             logging.StreamHandler()
-         ]
-     )
+    os.makedirs('logs', exist_ok=True)
+    
+    # Default logging configuration
+    log_level = logging.INFO
+    log_file = os.path.join('logs', f'repo_analyzer_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+    
+    # Override with provided configuration if available
+    if logging_config:
+        log_level = getattr(logging, logging_config.get('level', 'INFO').upper())
+        log_file = os.path.join(
+            logging_config.get('file_path', 'logs'), 
+            f'repo_analyzer_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+        )
+    
+    # Configure logging
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s: %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()  # Also print to console
+        ]
+    )
      
 def error_handler(func):
     # Decorator to handle common exceptions and log errors
@@ -120,7 +132,7 @@ def get_file_contents (repo_url, file_path):
 def analyze_code_complexity(file_content, filename):
     logging.info(f"Analyzing code complexity for {filename}")
     try:
-        # Cyclomattic Complexity
+        # Cyclomatic Complexity
         """Measures the number of linearly independent paths through a program's source code
            Indicates how complex a piece of code is to test and maintain
            Counts decision points in code, the higher the number, the more complex the code"""
@@ -131,11 +143,43 @@ def analyze_code_complexity(file_content, filename):
         Volume: Amount of information in code
         Difficulty: Potential for errors
         Effort: Estimated mental effort to understand code"""
-        halstead_metrics = h_visit(file_content)
+        try:
+            halstead_metrics = h_visit(file_content)
+            
+            if isinstance(halstead_metrics, list):
+                if halstead_metrics:
+                    halstead_data = {
+                        'volume': halstead_metrics.volume,
+                        'difficulty': halstead_metrics.difficulty,
+                        'effort': halstead_metrics.effort,
+                    }
+                else: 
+                    halstead_data = {
+                        'volume': 0,
+                        'difficulty': 0,
+                        'effort': 0
+                    }
+            else:
+                halstead_data = {
+                    'volume': getattr(halstead_metrics, 'volume', 0),
+                    'difficulty': getattr(halstead_metrics, 'difficulty', 0),
+                    'effort': getattr(halstead_metrics, 'effort', 0)
+                }
+        except Exception as e:
+            logging.error(f"Error calculating Halstead metrics: {e}")
+            halstead_data = {
+                'volume': 0,
+                'difficulty': 0,
+                'effort': 0
+            }
         
         # Pylint Static Analysis
         """Checks for programming errors, code style, and adherence to best practices"""
-        pylint_output = analyze_with_pylint(file_content, filename)
+        try:
+            pylint_output = analyze_with_pylint(file_content, filename)
+        except Exception as e:
+            logging.error(f"Pylint analysis error: {e}")
+            pylint_output = f"Unable to perform Pylint analysis"
         
         return{
             'cyclomatic_complexity': [
@@ -144,11 +188,7 @@ def analyze_code_complexity(file_content, filename):
                     'complexity': func.complexity,
                 } for func in complexity_results
             ],
-            'halstead_metrics': {
-                'volume': halstead_metrics.volume,
-                'difficulty': halstead_metrics.difficulty,
-                'effort': halstead_metrics.effort,
-            },
+            'halstead_metrics': halstead_data,
             'pylint_issues': pylint_output
         }
         
@@ -158,10 +198,11 @@ def analyze_code_complexity(file_content, filename):
 
 def analyze_with_pylint(file_content, filename):
      # Temporary file for pylint analysis
-    with open(f'temp_{filename}', 'w') as temp_file:
-        temp_file.write(file_content)
-    
     try:
+        # Temporary file for pylint analysis
+        with open(f'temp_{filename}', 'w', encoding='utf-8') as temp_file:
+            temp_file.write(file_content)
+        
         # Capture Pylint output
         from io import StringIO
         import sys
@@ -170,22 +211,22 @@ def analyze_with_pylint(file_content, filename):
         redirected_output = sys.stdout = StringIO()
         
         # Run Pylint
-        pylint.lint.Run([f'temp_{filename}'], exit=False)
+        from pylint import lint
+        lint.Run([f'temp_{filename}'], exit=False)
         
         # Restore stdout
         sys.stdout = old_stdout
         
-        # Parse output
+        # Get output
         output = redirected_output.getvalue()
         
         # Clean up temporary file
         os.remove(f'temp_{filename}')
         
         return output
-    
     except Exception as e:
-        print(f"Pylint analysis error: {e}")
-        return None
+        logging.error(f"Pylint analysis error: {e}")
+        return f"Unable to perform Pylint analysis: {e}"
 
 def generate_markdown_report(repo_info, file_analyses):
     # Generate comprehensive markdown documentation for the repository
@@ -232,7 +273,7 @@ def generate_markdown_report(repo_info, file_analyses):
         
         # Save markdown report to a file
         output_dir = 'repository_analysis'
-        os.markdir(output_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(output_dir, f"{repo_info['name']}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
         
         with open(output_file, 'w') as f:
@@ -270,20 +311,24 @@ def validate_github_url(url):
         raise ValueError("Invalid GitHub repository URL")
     return url
 
-def load_configuration(config_path: str = 'config.yaml') -> Dict[str, Any]:
-    # Load configuration from a YAML file with defaults
+def load_configuration(config_path: str = None) -> Dict[str, Any]:
+    # Determine the correct path to config.yaml
+    if config_path is None:
+        # Get the absolute path to the project root
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(project_root, 'config', 'config.yaml')
+    
     try:
         with open(config_path, 'r') as config_file:
             config = yaml.safe_load(config_file)
-            
-        # Validate configuration
+        
         validate_config(config)
         return config
     except FileNotFoundError:
-        logging.error(f"Configuration file not found: {config_path}. Using default configuration.")
+        logging.warning(f"Configuration file not found at {config_path}. Using default settings.")
         return get_default_config()
     except yaml.YAMLError as e:
-        logging.error(f"Error parsing configuration file: {e}")
+        logging.error(f"Error parsing configuration: {e}")
         return get_default_config()
 
 def validate_config(config: Dict[str, Any]):

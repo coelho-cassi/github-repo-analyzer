@@ -6,15 +6,15 @@ github:
     pylint_enabled: true
 
 logging:
-  level:'INFO'
-  file_path: 'logs/'
+  level: "INFO"
+  file_path: "logs/"
 
 report:
   output_formats:
-  - markdown
-  - html
+    - markdown
+    - html
 
   include_sections:
-  - complexity
-  - halstead_metrics
-  - pylint_issues
+    - complexity
+    - halstead_metrics
+    - pylint_issues
